@@ -1,0 +1,23 @@
+meta {
+  name: getLegacyEndpoints - Catalogue des endpoints (legacy)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}:{{port}}/endpoints
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Route historique, conservée à l'identique. Retourne le catalogue des endpoints de lecture. Remplacée par les routes /v1.
+}

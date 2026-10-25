@@ -1,0 +1,33 @@
+meta {
+  name: getContractInvoice - Lire une facture
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/v1/contracts/{{contractId}}/invoices/{{invoiceId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.invoice_id: isDefined
+  res.body.invoice_number: isDefined
+  res.body.type: isDefined
+  res.body.period: isDefined
+  res.body.invoice_date: isDefined
+  res.body.due_date: isDefined
+  res.body.amount_eur: isDefined
+  res.body.amount_paid_eur: isDefined
+  res.body.amount_due_eur: isDefined
+  res.body.can_download: isDefined
+}
+
+docs {
+  Retourne le détail d'une facture du contrat. Le service ne dispose pas de route amont dédiée : la facture est retrouvée dans la liste des factures du contrat. Le fichier PDF n'est pas servi.
+}

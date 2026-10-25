@@ -1,0 +1,23 @@
+meta {
+  name: getLegacyDataByName - Données d'un endpoint (legacy)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{host}}:{{port}}/data/{{legacyName}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Route historique, conservée à l'identique. Retourne les données brutes d'un endpoint de lecture (avec cache TTL). Remplacée par les routes /v1.
+}

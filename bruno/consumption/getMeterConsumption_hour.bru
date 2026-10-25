@@ -1,0 +1,39 @@
+meta {
+  name: getMeterConsumption (granularité hour) - Lire la consommation agrégée
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption
+  body: none
+  auth: bearer
+}
+
+params:query {
+  from: 2026-10-18
+  to: 2026-10-24
+  granularity: hour
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Retourne une série de consommation agrégée par `granularity` (heure, jour, semaine ou mois).
+
+  - `hour`, `day` et `week` : plage de 31 jours maximum.
+  - `month` : uniquement pour les 6 derniers mois. Une plage plus ancienne donne une erreur 422.
+
+  Chaque point indique si la période est complète (`complete: true`). Une période est incomplète si certains relevés manquent.
+
+  Variante : granularité hour.
+}

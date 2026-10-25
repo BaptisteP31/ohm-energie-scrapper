@@ -1,0 +1,23 @@
+meta {
+  name: getLegacyDataList - Liste des endpoints de données (legacy)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/data
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Route historique, conservée à l'identique. Liste les noms d'endpoints de données disponibles. Remplacée par les routes /v1.
+}

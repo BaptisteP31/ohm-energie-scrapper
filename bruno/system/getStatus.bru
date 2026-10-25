@@ -1,0 +1,26 @@
+meta {
+  name: getStatus - Lire l'état du service et de la connexion amont
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/v1/status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.service: isDefined
+  res.body.upstream: isDefined
+  res.body.cache: isDefined
+}
+
+docs {
+  Retourne la version du service, l'état de la connexion à l'espace client Ohm Énergie, la durée de vie du cache et l'horodatage du dernier appel amont réussi.
+}

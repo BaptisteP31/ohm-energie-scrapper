@@ -1,0 +1,38 @@
+meta {
+  name: getMeterConsumptionSummary (période last-7-days) - Résumer la consommation d'une période prédéfinie
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  period: last-7-days
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.period: isDefined
+  res.body.total_kwh: isDefined
+  res.body.average_kwh_per_day: isDefined
+  res.body.min_day: isDefined
+  res.body.max_day: isDefined
+  res.body.days_count: isDefined
+  res.body.complete_days_count: isDefined
+}
+
+docs {
+  Calcule le total, la moyenne journalière, le jour le plus bas et le jour le plus haut de la période choisie.
+  Seuls les jours complets sont pris en compte pour les moyennes et les extrêmes.
+
+  Variante : période last-7-days.
+}

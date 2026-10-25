@@ -1,0 +1,35 @@
+meta {
+  name: listContractInvoices - Lister les factures d'un contrat
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}:{{port}}/v1/contracts/{{contractId}}/invoices?page=1&limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 100
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+vars:post-response {
+  invoiceId: res.body.items[0].invoice_id
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isDefined
+  res.body.items: isArray
+  res.body.pagination: isDefined
+}
+
+docs {
+  Retourne les factures du contrat, paginées (`page`, `limit`, 500 maximum). Les montants sont exprimés en euros TTC.
+}

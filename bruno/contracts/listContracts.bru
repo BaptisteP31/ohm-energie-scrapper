@@ -1,0 +1,29 @@
+meta {
+  name: listContracts - Lister les contrats
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}:{{port}}/v1/contracts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+vars:post-response {
+  contractId: res.body.items[0].contract_id
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Retourne les contrats du compte client, avec leur statut et leur catégorie. Le numéro de contrat n'est jamais exposé, seul `contract_id` opaque l'est.
+}

@@ -339,6 +339,25 @@ def build_parser() -> argparse.ArgumentParser:
         "discover",
         help="régénérer docs/inventory.md (forme des réponses, valeurs masquées)",
     )
+    serve = subparsers.add_parser(
+        "serve",
+        help="démarrer l'API HTTP locale (accès en lecture seule)",
+        description=(
+            "Démarre un service HTTP local exposant les données de l'espace client "
+            "Ohm Énergie (/health, /endpoints, /data, /consumption)."
+        ),
+    )
+    serve.add_argument(
+        "--host",
+        metavar="HÔTE",
+        help="adresse d'écoute (défaut : SERVICE_HOST ou 127.0.0.1)",
+    )
+    serve.add_argument(
+        "--port",
+        type=int,
+        metavar="PORT",
+        help="port d'écoute (défaut : SERVICE_PORT ou 8080)",
+    )
     return parser
 
 
@@ -355,5 +374,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_consumption(args)
     if args.command == "discover":
         return run_discover(args)
+    if args.command == "serve":
+        from ohm_scraper.server import run_server
+        return run_server(host=args.host, port=args.port)
     parser.error("sous-commande inconnue")
     return 2

@@ -1,0 +1,36 @@
+meta {
+  name: getMeterConsumptionBaseline - Estimer la consommation de veille
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/baseline
+  body: none
+  auth: bearer
+}
+
+params:query {
+  from: 2026-10-18
+  to: 2026-10-24
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.from: isDefined
+  res.body.to: isDefined
+  res.body.baseline_w: isDefined
+  res.body.nights_count: isDefined
+  res.body.method: isDefined
+}
+
+docs {
+  Estime la puissance de base (`baseline_w`). Pour chaque nuit, le service retient le relevé demi-heure minimal entre 00 h 00 et 05 h 00.
+  La valeur est convertie en watts (`wh * 2`). Le résultat est la médiane de ces minimums sur les nuits de la plage.
+  La plage est limitée à 31 jours.
+}

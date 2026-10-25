@@ -1,0 +1,42 @@
+meta {
+  name: getMeterConsumptionComparison (période week) - Comparer la consommation à la période précédente
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/comparison
+  body: none
+  auth: bearer
+}
+
+params:query {
+  period: week
+  against: previous
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.period: isDefined
+  res.body.against: isDefined
+  res.body.current: isDefined
+  res.body.reference: isDefined
+  res.body.delta_kwh: isDefined
+  res.body.delta_percent: isDefined
+}
+
+docs {
+  Compare la période courante à la période de référence.
+
+  - `period=week` : les 7 derniers jours complets, comparés aux 7 jours précédents.
+  - `period=month` : le dernier mois complet, comparé au mois précédent. Les données proviennent de la série des 6 derniers mois.
+
+  `against=last-year` n'est pas supporté et donne une erreur 422.
+
+  Variante : période week.
+}

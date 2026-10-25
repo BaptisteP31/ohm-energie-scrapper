@@ -1,0 +1,1715 @@
+openapi: 3.1.0
+info:
+  title: Ohm Énergie Scrapper API
+  version: 1.0.0
+  summary: API de lecture de l'espace client Ohm Énergie
+  description: |
+    Service REST en lecture seule qui expose les données de l'espace client Ohm Énergie.
+
+    **Principes**
+
+    - Seules des requêtes `GET` sont exposées. Le service ne modifie jamais de données côté Ohm Énergie.
+    - Toutes les routes sont sous `/v1`, sauf `GET /health` (sans authentification).
+    - Authentification : jeton Bearer si la variable `OHM_API_TOKEN` est configurée sur le service. Sinon, aucune authentification n'est exigée.
+    - Erreurs : réponses `application/problem+json` (RFC 9457) avec les champs `type`, `title`, `status` et `detail`.
+    - Dates : format ISO 8601 `YYYY-MM-DD`. Horodatages : ISO 8601 avec décalage horaire (exemple : `2026-10-22T00:00:00+02:00`).
+    - Noms de champs en `snake_case`. Énergie exprimée en kWh, sauf si le nom du champ indique `_wh`, `_w` ou `_eur`.
+    - Identifiants opaques : `meterId` et `contractId` sont les 12 premiers caractères hexadécimaux du SHA-256 du PDL ou du numéro de contrat. Le PDL n'apparaît jamais dans une URL.
+    - Délai des données : les relevés arrivent avec un retard de 24 à 48 h. Le champ `meta.delay_notice` le rappelle dans les réponses de consommation.
+    - Les routes `legacy` sont conservées à l'identique. Elles sont dépréciées.
+
+    **Codes d'erreur**
+
+    - 400 : paramètre mal formé (format de date, entier non valide, valeur d'énumération inconnue).
+    - 422 : paramètres bien formés mais non traitables (plage trop longue, `from` postérieur à `to`, valeur non supportée comme `against=last-year`).
+    - 404 : identifiant inconnu.
+    - 401 : jeton absent ou invalide.
+    - 429 : trop de requêtes. L'en-tête `Retry-After` indique le délai d'attente.
+    - 502 : réponse invalide ou erreur de l'espace client Ohm Énergie.
+    - 503 : service indisponible (connexion à Ohm Énergie non établie ou service en cours de démarrage).
+servers:
+  - url: http://127.0.0.1:8080
+    description: Service local
+security:
+  - bearerAuth: []
+tags:
+  - name: meters
+    description: Compteurs (PDL) rattachés aux contrats.
+  - name: readings
+    description: Relevés demi-heure bruts.
+  - name: consumption
+    description: Consommation agrégée, calculée par le service à partir des relevés.
+  - name: contracts
+    description: Contrats du compte client.
+  - name: billing
+    description: Factures, soldes et métadonnées de grilles tarifaires.
+  - name: system
+    description: Santé et état du service.
+  - name: legacy
+    description: Routes historiques, conservées à l'identique. Dépréciées, remplacées par les routes /v1.
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [system]
+      summary: Vérifier que le service répond
+      description: Retourne l'état du service. Accessible sans authentification et sans appel à Ohm Énergie.
+      security: []
+      x-ohm-source: []
+      x-computed: false
+      responses:
+        "200":
+          description: Le service répond.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+
+  /v1/status:
+    get:
+      operationId: getStatus
+      tags: [system]
+      summary: Lire l'état du service et de la connexion amont
+      description: Retourne la version du service, l'état de la connexion à l'espace client Ohm Énergie, la durée de vie du cache et l'horodatage du dernier appel amont réussi.
+      x-ohm-source: []
+      x-computed: false
+      responses:
+        "200":
+          description: État du service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+              example:
+                service:
+                  version: 1.0.0
+                upstream:
+                  login_state: logged_in
+                  last_successful_call_at: "2026-10-24T08:15:02+02:00"
+                cache:
+                  ttl_seconds: 300
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters:
+    get:
+      operationId: listMeters
+      tags: [meters]
+      summary: Lister les compteurs
+      description: Retourne les compteurs de tous les contrats du compte. Le PDL est fourni dans le corps de la réponse, jamais dans l'URL.
+      x-ohm-source: [contracts, account]
+      x-computed: false
+      responses:
+        "200":
+          description: Liste des compteurs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeterList'
+              example:
+                items:
+                  - id: 3f9a1c0b7e2d
+                    pdl: "00000000000000"
+                    subscribed_power_kva: 6
+                    is_linky: true
+                    contract_id: 9c41e7a2b0d5
+                    data_access_enabled: true
+                    start_date: "2026-01-12"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}:
+    get:
+      operationId: getMeter
+      tags: [meters]
+      summary: Lire un compteur
+      description: Retourne les caractéristiques d'un compteur identifié par son `meterId` opaque.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+      x-ohm-source: [contracts, account]
+      x-computed: false
+      responses:
+        "200":
+          description: Compteur trouvé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meter'
+              example:
+                id: 3f9a1c0b7e2d
+                pdl: "00000000000000"
+                subscribed_power_kva: 6
+                is_linky: true
+                contract_id: 9c41e7a2b0d5
+                data_access_enabled: true
+                start_date: "2026-01-12"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/readings:
+    get:
+      operationId: listMeterReadings
+      tags: [readings]
+      summary: Lister les relevés demi-heure
+      description: |
+        Retourne les relevés de 30 minutes entre `from` et `to` inclus, avec un maximum de 31 jours par requête.
+        Les résultats sont paginés (`page`, `limit`, 500 maximum). L'en-tête `Link` donne les pages précédente et suivante.
+
+        Avec l'en-tête `Accept: text/csv`, la même page est retournée au format CSV (colonnes `timestamp,wh,kwh,tariff_period`).
+
+        Les relevés arrivent avec un retard de 24 à 48 h. Les dernières heures peuvent donc être absentes.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      x-ohm-source: [consumption_hourly]
+      x-computed: false
+      responses:
+        "200":
+          description: Page de relevés demi-heure.
+          headers:
+            Link:
+              description: Liens de pagination au format RFC 8288 (rel=first, prev, next, last).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingList'
+              example:
+                items:
+                  - timestamp: "2026-10-22T00:00:00+02:00"
+                    wh: 412
+                    kwh: 0.412
+                    tariff_period: off_peak
+                  - timestamp: "2026-10-22T00:30:00+02:00"
+                    wh: 398
+                    kwh: 0.398
+                    tariff_period: off_peak
+                pagination:
+                  page: 1
+                  limit: 100
+                  total_items: 1488
+                  total_pages: 15
+                  has_next: true
+            text/csv:
+              schema:
+                type: string
+                description: Export CSV de la page demandée, avec une ligne d'en-tête.
+              example: |
+                timestamp,wh,kwh,tariff_period
+                2026-10-22T00:00:00+02:00,412,0.412,off_peak
+                2026-10-22T00:30:00+02:00,398,0.398,off_peak
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption:
+    get:
+      operationId: getMeterConsumption
+      tags: [consumption]
+      summary: Lire la consommation agrégée
+      description: |
+        Retourne une série de consommation agrégée par `granularity` (heure, jour, semaine ou mois).
+
+        - `hour`, `day` et `week` : plage de 31 jours maximum.
+        - `month` : uniquement pour les 6 derniers mois. Une plage plus ancienne donne une erreur 422.
+
+        Chaque point indique si la période est complète (`complete: true`). Une période est incomplète si certains relevés manquent.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/Granularity'
+      x-ohm-source: [consumption_hourly, consumption_six_months]
+      x-computed: true
+      responses:
+        "200":
+          description: Série de consommation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsumptionSeries'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                items:
+                  - period_start: "2026-10-20"
+                    kwh: 12.4
+                    complete: true
+                    points: 48
+                  - period_start: "2026-10-21"
+                    kwh: 11.9
+                    complete: true
+                    points: 48
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/summary:
+    get:
+      operationId: getMeterConsumptionSummary
+      tags: [consumption]
+      summary: Résumer la consommation d'une période prédéfinie
+      description: |
+        Calcule le total, la moyenne journalière, le jour le plus bas et le jour le plus haut de la période choisie.
+        Seuls les jours complets sont pris en compte pour les moyennes et les extrêmes.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/SummaryPeriod'
+      x-ohm-source: [consumption_hourly, consumption_kwh_data]
+      x-computed: true
+      responses:
+        "200":
+          description: Résumé de la période.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsumptionSummary'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                period: last-7-days
+                total_kwh: 81.6
+                average_kwh_per_day: 11.66
+                min_day:
+                  date: "2026-10-18"
+                  kwh: 9.8
+                max_day:
+                  date: "2026-10-21"
+                  kwh: 13.2
+                days_count: 7
+                complete_days_count: 7
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/comparison:
+    get:
+      operationId: getMeterConsumptionComparison
+      tags: [consumption]
+      summary: Comparer la consommation à la période précédente
+      description: |
+        Compare la période courante à la période de référence.
+
+        - `period=week` : les 7 derniers jours complets, comparés aux 7 jours précédents.
+        - `period=month` : le dernier mois complet, comparé au mois précédent. Les données proviennent de la série des 6 derniers mois.
+
+        `against=last-year` n'est pas supporté et donne une erreur 422.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/ComparisonPeriod'
+        - $ref: '#/components/parameters/Against'
+      x-ohm-source: [consumption_six_months, consumption_hourly]
+      x-computed: true
+      responses:
+        "200":
+          description: Comparaison entre la période courante et la référence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comparison'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                period: week
+                against: previous
+                current:
+                  from: "2026-10-18"
+                  to: "2026-10-24"
+                  kwh: 81.6
+                reference:
+                  from: "2026-10-11"
+                  to: "2026-10-17"
+                  kwh: 88.2
+                delta_kwh: -6.6
+                delta_percent: -7.5
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/profile:
+    get:
+      operationId: getMeterConsumptionProfile
+      tags: [consumption]
+      summary: Calculer le profil moyen de consommation
+      description: |
+        Calcule la consommation moyenne par heure de la journée (`hour-of-day`) ou par jour de la semaine (`day-of-week`), sur la plage demandée.
+        La plage est limitée à 31 jours.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/ProfileBy'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+      x-ohm-source: [consumption_hourly]
+      x-computed: true
+      responses:
+        "200":
+          description: Profil moyen par tranche.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsumptionProfile'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                by: day-of-week
+                from: "2026-10-11"
+                to: "2026-10-24"
+                items:
+                  - bucket: 1
+                    label: lundi
+                    average_kwh: 11.2
+                    samples: 2
+                  - bucket: 2
+                    label: mardi
+                    average_kwh: 12.0
+                    samples: 2
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/baseline:
+    get:
+      operationId: getMeterConsumptionBaseline
+      tags: [consumption]
+      summary: Estimer la consommation de veille
+      description: |
+        Estime la puissance de base (`baseline_w`). Pour chaque nuit, le service retient le relevé demi-heure minimal entre 00 h 00 et 05 h 00.
+        La valeur est convertie en watts (`wh * 2`). Le résultat est la médiane de ces minimums sur les nuits de la plage.
+        La plage est limitée à 31 jours.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+      x-ohm-source: [consumption_hourly]
+      x-computed: true
+      responses:
+        "200":
+          description: Estimation de la veille.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Baseline'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                from: "2026-10-11"
+                to: "2026-10-24"
+                baseline_w: 145
+                nights_count: 14
+                method: "Médiane, sur les nuits de la plage, du relevé demi-heure minimal entre 00 h 00 et 05 h 00, converti en W (wh * 2)."
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/anomalies:
+    get:
+      operationId: getMeterConsumptionAnomalies
+      tags: [consumption]
+      summary: Détecter les jours anormaux
+      description: |
+        Signale les jours dont la consommation quotidienne s'écarte de la moyenne de la plage de plus de `threshold` écarts-types.
+        La plage doit comporter entre 7 et 31 jours.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/Threshold'
+      x-ohm-source: [consumption_hourly]
+      x-computed: true
+      responses:
+        "200":
+          description: Jours anormaux détectés sur la plage (liste éventuellement vide).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyResult'
+              example:
+                meta:
+                  source: ohm
+                  computed: true
+                  delay_notice: "Les relevés sont disponibles avec un délai de 24 à 48 h."
+                from: "2026-10-01"
+                to: "2026-10-14"
+                threshold: 2.0
+                mean_kwh: 11.5
+                items:
+                  - date: "2026-10-09"
+                    kwh: 24.8
+                    mean_kwh: 11.5
+                    z_score: 2.31
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/meters/{meterId}/consumption/breakdown:
+    get:
+      operationId: getMeterConsumptionBreakdown
+      tags: [consumption]
+      summary: Lire la répartition estimée par usage
+      description: |
+        Retourne la répartition estimée de la consommation par usage (chauffage, eau chaude, cuisson, veille, etc.), telle que calculée par Ohm Énergie.
+        Les valeurs sont des estimations (`estimated: true`). Le service ne les recalcule pas et ne précise pas de plage de dates.
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+      x-ohm-source: [usage_consumption]
+      x-computed: false
+      responses:
+        "200":
+          description: Répartition estimée par usage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Breakdown'
+              example:
+                estimated: true
+                source: ohm
+                items:
+                  - usage: Heat
+                    label: chauffage
+                    kwh: 3120
+                  - usage: ECS
+                    label: eau chaude sanitaire
+                    kwh: 840
+                  - usage: Cooking
+                    label: cuisson
+                    kwh: 310
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/contracts:
+    get:
+      operationId: listContracts
+      tags: [contracts]
+      summary: Lister les contrats
+      description: Retourne les contrats du compte client, avec leur statut et leur catégorie. Le numéro de contrat n'est jamais exposé, seul `contract_id` opaque l'est.
+      x-ohm-source: [contracts]
+      x-computed: false
+      responses:
+        "200":
+          description: Liste des contrats.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractList'
+              example:
+                items:
+                  - contract_id: 9c41e7a2b0d5
+                    meter_id: 3f9a1c0b7e2d
+                    status: active
+                    category: "Résidentiel"
+                    start_date: "2026-01-12"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/contracts/{contractId}/invoices:
+    get:
+      operationId: listContractInvoices
+      tags: [billing]
+      summary: Lister les factures d'un contrat
+      description: Retourne les factures du contrat, paginées (`page`, `limit`, 500 maximum). Les montants sont exprimés en euros TTC.
+      parameters:
+        - $ref: '#/components/parameters/ContractId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      x-ohm-source: [invoices]
+      x-computed: false
+      responses:
+        "200":
+          description: Page de factures.
+          headers:
+            Link:
+              description: Liens de pagination au format RFC 8288 (rel=first, prev, next, last).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceList'
+              example:
+                items:
+                  - invoice_id: "INV-2026-0931"
+                    invoice_number: 2026093100
+                    type: "Facture de régularisation"
+                    period: "Octobre 2026"
+                    invoice_date: "2026-10-01"
+                    due_date: "2026-10-20"
+                    amount_eur: 84.2
+                    amount_paid_eur: 0
+                    amount_due_eur: 84.2
+                    can_download: true
+                pagination:
+                  page: 1
+                  limit: 100
+                  total_items: 3
+                  total_pages: 1
+                  has_next: false
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/contracts/{contractId}/invoices/{invoiceId}:
+    get:
+      operationId: getContractInvoice
+      tags: [billing]
+      summary: Lire une facture
+      description: "Retourne le détail d'une facture du contrat. Le service ne dispose pas de route amont dédiée : la facture est retrouvée dans la liste des factures du contrat. Le fichier PDF n'est pas servi."
+      parameters:
+        - $ref: '#/components/parameters/ContractId'
+        - $ref: '#/components/parameters/InvoiceId'
+      x-ohm-source: [invoices]
+      x-computed: false
+      responses:
+        "200":
+          description: Facture trouvée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+              example:
+                invoice_id: "INV-2026-0931"
+                invoice_number: 2026093100
+                type: "Facture de régularisation"
+                period: "Octobre 2026"
+                invoice_date: "2026-10-01"
+                due_date: "2026-10-20"
+                amount_eur: 84.2
+                amount_paid_eur: 0
+                amount_due_eur: 84.2
+                can_download: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/contracts/{contractId}/balance:
+    get:
+      operationId: getContractBalance
+      tags: [billing]
+      summary: Lire le solde du contrat
+      description: Retourne le solde du contrat et le solde total. Un solde positif signifie que le client doit de l'argent. Le champ `balance_eur` peut être `null` si Ohm Énergie ne renvoie aucune valeur.
+      parameters:
+        - $ref: '#/components/parameters/ContractId'
+      x-ohm-source: [balance, balance_total]
+      x-computed: false
+      responses:
+        "200":
+          description: Solde du contrat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+              example:
+                contract_id: 9c41e7a2b0d5
+                balance_eur: 84.2
+                total_balance_eur: 84.2
+                currency: EUR
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/contracts/{contractId}/tariffs:
+    get:
+      operationId: listContractTariffs
+      tags: [billing]
+      summary: Lister les grilles tarifaires du contrat (métadonnées)
+      description: |
+        Retourne les métadonnées des grilles tarifaires du contrat : nom de l'offre, dates de début et de fin, nom du fichier du document.
+        Cette route ne retourne aucun prix. Les prix ne sont pas exposés par l'API.
+      parameters:
+        - $ref: '#/components/parameters/ContractId'
+      x-ohm-source: [price_sheets, contracts]
+      x-computed: false
+      responses:
+        "200":
+          description: Métadonnées des grilles tarifaires, sans prix.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffList'
+              example:
+                items:
+                  - offer_name: "Offre Ohm Verte"
+                    start_date: "2026-01-12"
+                    end_date: "2026-10-31"
+                    document_file_name: "grille-2026-01.pdf"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/BadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /endpoints:
+    get:
+      operationId: getLegacyEndpoints
+      tags: [legacy]
+      deprecated: true
+      summary: Catalogue des endpoints (legacy)
+      description: Route historique, conservée à l'identique. Retourne le catalogue des endpoints de lecture. Remplacée par les routes /v1.
+      x-ohm-source: []
+      x-computed: false
+      responses:
+        "200":
+          description: Catalogue des endpoints.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Catalogue des endpoints de lecture, sans structure figée.
+                additionalProperties: true
+        "401":
+          $ref: '#/components/responses/LegacyUnauthorized'
+        "502":
+          $ref: '#/components/responses/LegacyBadGateway'
+
+  /data:
+    get:
+      operationId: getLegacyDataList
+      tags: [legacy]
+      deprecated: true
+      summary: Liste des endpoints de données (legacy)
+      description: Route historique, conservée à l'identique. Liste les noms d'endpoints de données disponibles. Remplacée par les routes /v1.
+      x-ohm-source: []
+      x-computed: false
+      responses:
+        "200":
+          description: Liste des endpoints de données.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Liste des endpoints de données, sans structure figée.
+                additionalProperties: true
+        "401":
+          $ref: '#/components/responses/LegacyUnauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+
+  /data/{name}:
+    get:
+      operationId: getLegacyDataByName
+      tags: [legacy]
+      deprecated: true
+      summary: Données d'un endpoint (legacy)
+      description: Route historique, conservée à l'identique. Retourne les données brutes d'un endpoint de lecture (avec cache TTL). Remplacée par les routes /v1.
+      parameters:
+        - $ref: '#/components/parameters/LegacyName'
+      x-ohm-source: ["tout endpoint de DUMP_ENDPOINTS, voir GET /endpoints"]
+      x-computed: false
+      responses:
+        "200":
+          description: Données brutes de l'endpoint.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Réponse brute de l'espace client Ohm Énergie, sans structure figée.
+                additionalProperties: true
+        "401":
+          $ref: '#/components/responses/LegacyUnauthorized'
+        "404":
+          $ref: '#/components/responses/LegacyNotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+        "502":
+          $ref: '#/components/responses/LegacyBadGateway'
+        "503":
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /consumption:
+    get:
+      operationId: getLegacyConsumption
+      tags: [legacy]
+      deprecated: true
+      summary: Séries de consommation (legacy)
+      description: |
+        Route historique, conservée à l'identique. Retourne une série de consommation pour `granularity` = `hourly`, `daily`, `power-days` ou `power-months`.
+        Paramètres : `from`, `to`, `format` (`json` ou `csv`) et `refresh`. Remplacée par les routes /v1.
+      parameters:
+        - name: granularity
+          in: query
+          required: false
+          description: "Granularité : hourly, daily, power-days ou power-months (défaut : daily)."
+          schema:
+            type: string
+            enum: [hourly, daily, power-days, power-months]
+        - name: from
+          in: query
+          required: false
+          description: Date de début (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Date de fin (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: format
+          in: query
+          required: false
+          description: "Format de sortie : json (défaut) ou csv."
+          schema:
+            type: string
+            enum: [json, csv]
+        - name: refresh
+          in: query
+          required: false
+          description: Force le rafraîchissement du cache (1, true ou yes).
+          schema:
+            type: string
+      x-ohm-source: [consumption_hourly, consumption_kwh_data, consumption_power_days, consumption_power_months]
+      x-computed: false
+      responses:
+        "200":
+          description: Série de consommation au format demandé.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Série de consommation, sans structure figée.
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+                description: Export CSV de la série.
+        "400":
+          description: Granularité inconnue ou dates invalides.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyError'
+        "401":
+          $ref: '#/components/responses/LegacyUnauthorized'
+        "502":
+          $ref: '#/components/responses/LegacyBadGateway'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Jeton défini par OHM_API_TOKEN. Requis sur toutes les routes sauf GET /health, dès que la variable est configurée."
+
+  parameters:
+    MeterId:
+      name: meterId
+      in: path
+      required: true
+      description: Identifiant opaque du compteur (12 caractères hexadécimaux, SHA-256 du PDL tronqué).
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{12}$"
+        example: 3f9a1c0b7e2d
+    ContractId:
+      name: contractId
+      in: path
+      required: true
+      description: Identifiant opaque du contrat (12 caractères hexadécimaux, SHA-256 du numéro de contrat tronqué).
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{12}$"
+        example: 9c41e7a2b0d5
+    InvoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      description: Identifiant de la facture, tel que fourni par Ohm Énergie dans la liste des factures du contrat.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        example: INV-2026-0931
+    FromDate:
+      name: from
+      in: query
+      required: true
+      description: "Date de début, incluse (YYYY-MM-DD). Doit être antérieure ou égale à `to`."
+      schema:
+        type: string
+        format: date
+        example: "2026-10-18"
+    ToDate:
+      name: to
+      in: query
+      required: true
+      description: "Date de fin, incluse (YYYY-MM-DD). La plage `from`-`to` ne dépasse pas 31 jours, sauf mention contraire."
+      schema:
+        type: string
+        format: date
+        example: "2026-10-24"
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Numéro de page, à partir de 1.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Nombre d'éléments par page (1 à 500).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Granularity:
+      name: granularity
+      in: query
+      required: false
+      description: "Pas de la série : `hour`, `day`, `week` ou `month`. Défaut : `day`."
+      schema:
+        type: string
+        enum: [hour, day, week, month]
+        default: day
+    SummaryPeriod:
+      name: period
+      in: query
+      required: true
+      description: Période prédéfinie du résumé.
+      schema:
+        type: string
+        enum: [yesterday, last-7-days, last-30-days, last-month]
+    ComparisonPeriod:
+      name: period
+      in: query
+      required: true
+      description: "`week` : 7 derniers jours complets contre les 7 précédents. `month` : dernier mois complet contre le précédent."
+      schema:
+        type: string
+        enum: [week, month]
+    Against:
+      name: against
+      in: query
+      required: true
+      description: "Référence de comparaison. Seule la valeur `previous` est supportée. `last-year` donne une erreur 422."
+      schema:
+        type: string
+        enum: [previous]
+    ProfileBy:
+      name: by
+      in: query
+      required: true
+      description: "Regroupement du profil : `hour-of-day` (24 tranches) ou `day-of-week` (7 tranches, 1 = lundi)."
+      schema:
+        type: string
+        enum: [hour-of-day, day-of-week]
+    Threshold:
+      name: threshold
+      in: query
+      required: false
+      description: Seuil en écarts-types au-delà duquel un jour est signalé. Minimum 1.0.
+      schema:
+        type: number
+        minimum: 1.0
+        default: 2.0
+    LegacyName:
+      name: name
+      in: path
+      required: true
+      description: Nom de l'endpoint de données, tel que listé par GET /endpoints.
+      schema:
+        type: string
+        example: consumption_six_months
+
+  responses:
+    BadRequest:
+      description: "Requête mal formée : format de paramètre invalide (date, entier, valeur d'énumération)."
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:invalid-parameter"
+            title: Paramètre invalide
+            status: 400
+            detail: "Le paramètre 'from' doit être une date au format YYYY-MM-DD."
+    UnprocessableEntity:
+      description: "Paramètres bien formés mais non traitables : plage trop longue, `from` après `to`, plage hors fenêtre autorisée, valeur non supportée."
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:range-too-long"
+            title: Plage trop longue
+            status: 422
+            detail: "La plage demandée dépasse 31 jours. Découpez la requête."
+    Unauthorized:
+      description: Jeton Bearer absent ou invalide.
+      headers:
+        WWW-Authenticate:
+          description: Schéma d'authentification attendu.
+          schema:
+            type: string
+            example: Bearer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:unauthorized"
+            title: Authentification requise
+            status: 401
+            detail: "En-tête Authorization: Bearer <jeton> manquant ou invalide."
+    NotFound:
+      description: Identifiant inconnu pour ce compte.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:not-found"
+            title: Ressource introuvable
+            status: 404
+            detail: "Aucun compteur ne correspond à cet identifiant."
+    TooManyRequests:
+      description: "Trop de requêtes. Le délai d'attente est indiqué dans `Retry-After`."
+      headers:
+        Retry-After:
+          description: Délai d'attente en secondes avant une nouvelle requête.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:rate-limited"
+            title: Trop de requêtes
+            status: 429
+            detail: "Limite de débit atteinte. Réessayez après le délai indiqué."
+    BadGateway:
+      description: "Erreur de l'espace client Ohm Énergie : réponse invalide ou erreur amont."
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:upstream-error"
+            title: Erreur amont
+            status: 502
+            detail: "Erreur amont Ohm Énergie (HTTP 500)."
+    ServiceUnavailable:
+      description: "Service indisponible : connexion à Ohm Énergie non établie, ou service en cours de démarrage."
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "urn:ohm-scraper:problem:unavailable"
+            title: Service indisponible
+            status: 503
+            detail: "Connexion à Ohm Énergie impossible. Réessayez plus tard."
+    LegacyUnauthorized:
+      description: "Jeton Bearer absent ou invalide (route legacy)."
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LegacyError'
+          example:
+            error: "Authentification requise : en-tête Authorization: Bearer <token> manquant ou invalide."
+    LegacyNotFound:
+      description: "Endpoint inconnu (route legacy)."
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LegacyError'
+          example:
+            error: "endpoint inconnu : 'xyz'."
+    LegacyBadGateway:
+      description: "Erreur de l'espace client Ohm Énergie (route legacy)."
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LegacyError'
+          example:
+            error: "Erreur amont Ohm Énergie (HTTP 500)"
+
+  schemas:
+    Problem:
+      type: object
+      description: Erreur au format RFC 9457 (application/problem+json).
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI qui identifie le type d'erreur.
+          examples: ["urn:ohm-scraper:problem:invalid-parameter"]
+        title:
+          type: string
+          description: Résumé court et stable de l'erreur.
+        status:
+          type: integer
+          description: Code HTTP de la réponse.
+          examples: [400]
+        detail:
+          type: string
+          description: Explication de l'erreur, sans donnée personnelle.
+      additionalProperties: true
+
+    Pagination:
+      type: object
+      description: Informations de pagination. Les liens de navigation sont dans l'en-tête `Link`.
+      required: [page, limit, total_items, total_pages, has_next]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+        total_items:
+          type: integer
+          minimum: 0
+        total_pages:
+          type: integer
+          minimum: 0
+        has_next:
+          type: boolean
+
+    ResponseMeta:
+      type: object
+      description: Métadonnées communes aux réponses de consommation.
+      required: [source, computed, delay_notice]
+      properties:
+        source:
+          type: string
+          description: Origine des données. Toujours `ohm` (espace client Ohm Énergie).
+          enum: [ohm]
+        computed:
+          type: boolean
+          description: "`true` si le service a calculé la valeur à partir des relevés."
+        delay_notice:
+          type: string
+          description: Rappel du délai de disponibilité des données.
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    Status:
+      type: object
+      description: État du service et de la connexion amont.
+      required: [service, upstream, cache]
+      properties:
+        service:
+          type: object
+          required: [version]
+          properties:
+            version:
+              type: string
+              description: Version du service.
+        upstream:
+          type: object
+          required: [login_state, last_successful_call_at]
+          properties:
+            login_state:
+              type: string
+              enum: [logged_in, logged_out, unknown]
+              description: État de la session auprès de l'espace client Ohm Énergie.
+            last_successful_call_at:
+              type: ["string", "null"]
+              format: date-time
+              description: Horodatage (ISO 8601 avec décalage) du dernier appel amont réussi, ou `null` s'il n'y en a pas eu.
+        cache:
+          type: object
+          required: [ttl_seconds]
+          properties:
+            ttl_seconds:
+              type: integer
+              minimum: 0
+              description: Durée de vie du cache, en secondes.
+
+    Meter:
+      type: object
+      description: Compteur (PDL) rattaché à un contrat.
+      required: [id, pdl, subscribed_power_kva, is_linky, contract_id, data_access_enabled, start_date]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{12}$"
+          description: Identifiant opaque du compteur.
+        pdl:
+          type: string
+          description: Point de livraison (PDL) tel que fourni par Ohm Énergie. Présent dans le corps de la réponse uniquement, jamais dans une URL.
+        subscribed_power_kva:
+          type: number
+          description: Puissance souscrite, en kVA.
+        is_linky:
+          type: boolean
+          description: "`true` si le compteur est un Linky."
+        contract_id:
+          type: string
+          pattern: "^[0-9a-f]{12}$"
+          description: Identifiant opaque du contrat auquel le compteur est rattaché.
+        data_access_enabled:
+          type: boolean
+          description: "`true` si Ohm Énergie autorise l'accès aux données de consommation."
+        start_date:
+          type: string
+          format: date
+          description: Date de début contractuelle (YYYY-MM-DD).
+
+    MeterList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meter'
+
+    Reading:
+      type: object
+      description: Relevé de consommation sur 30 minutes.
+      required: [timestamp, wh, kwh, tariff_period]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Début de l'intervalle de 30 minutes, avec décalage horaire.
+        wh:
+          type: number
+          description: Énergie consommée sur l'intervalle, en Wh.
+        kwh:
+          type: number
+          description: Énergie consommée sur l'intervalle, en kWh.
+        tariff_period:
+          type: ["string", "null"]
+          enum: [peak, off_peak, null]
+          description: "Période tarifaire : `peak` (heures pleines), `off_peak` (heures creuses), ou `null` si inconnue."
+
+    ReadingList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reading'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ConsumptionPoint:
+      type: object
+      description: Point d'une série de consommation.
+      required: [period_start, kwh, complete, points]
+      properties:
+        period_start:
+          type: string
+          description: "Début de la période. Date (YYYY-MM-DD) pour day, week et month. Horodatage ISO 8601 pour hour."
+        kwh:
+          type: number
+          description: Consommation de la période, en kWh.
+        complete:
+          type: boolean
+          description: "`true` si tous les relevés de la période sont présents."
+        points:
+          type: integer
+          minimum: 0
+          description: Nombre de relevés demi-heure présents dans la période.
+
+    ConsumptionSeries:
+      type: object
+      required: [meta, items]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConsumptionPoint'
+
+    ConsumptionSummary:
+      type: object
+      required: [meta, period, total_kwh, average_kwh_per_day, min_day, max_day, days_count, complete_days_count]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        period:
+          type: string
+          enum: [yesterday, last-7-days, last-30-days, last-month]
+        total_kwh:
+          type: number
+        average_kwh_per_day:
+          type: number
+          description: Moyenne calculée sur les jours complets.
+        min_day:
+          $ref: '#/components/schemas/DayValue'
+        max_day:
+          $ref: '#/components/schemas/DayValue'
+        days_count:
+          type: integer
+          minimum: 0
+          description: Nombre de jours dans la période.
+        complete_days_count:
+          type: integer
+          minimum: 0
+          description: Nombre de jours complets dans la période.
+
+    DayValue:
+      type: object
+      required: [date, kwh]
+      properties:
+        date:
+          type: string
+          format: date
+        kwh:
+          type: number
+
+    Comparison:
+      type: object
+      required: [meta, period, against, current, reference, delta_kwh, delta_percent]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        period:
+          type: string
+          enum: [week, month]
+        against:
+          type: string
+          enum: [previous]
+        current:
+          $ref: '#/components/schemas/ComparisonPeriod'
+        reference:
+          $ref: '#/components/schemas/ComparisonPeriod'
+        delta_kwh:
+          type: number
+          description: Différence `current.kwh - reference.kwh`, en kWh.
+        delta_percent:
+          type: ["number", "null"]
+          description: Variation en pourcentage de la référence. `null` si la référence vaut 0.
+
+    ComparisonPeriod:
+      type: object
+      required: [from, to, kwh]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        kwh:
+          type: number
+
+    ConsumptionProfile:
+      type: object
+      required: [meta, by, from, to, items]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        by:
+          type: string
+          enum: [hour-of-day, day-of-week]
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileBucket'
+
+    ProfileBucket:
+      type: object
+      description: Tranche du profil. Pour `hour-of-day`, `bucket` va de 0 à 23. Pour `day-of-week`, `bucket` va de 1 (lundi) à 7 (dimanche).
+      required: [bucket, label, average_kwh, samples]
+      properties:
+        bucket:
+          type: integer
+          minimum: 0
+          maximum: 23
+        label:
+          type: string
+        average_kwh:
+          type: number
+          description: Consommation moyenne de la tranche, en kWh.
+        samples:
+          type: integer
+          minimum: 0
+          description: Nombre d'observations ayant servi au calcul.
+
+    Baseline:
+      type: object
+      required: [meta, from, to, baseline_w, nights_count, method]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        baseline_w:
+          type: ["number", "null"]
+          description: Puissance de base estimée, en W. `null` si aucune nuit exploitable.
+        nights_count:
+          type: integer
+          minimum: 0
+        method:
+          type: string
+          description: Description de la méthode de calcul.
+
+    AnomalyResult:
+      type: object
+      required: [meta, from, to, threshold, mean_kwh, items]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        threshold:
+          type: number
+          minimum: 1.0
+        mean_kwh:
+          type: number
+          description: Moyenne journalière de la plage, en kWh.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Anomaly'
+
+    Anomaly:
+      type: object
+      required: [date, kwh, mean_kwh, z_score]
+      properties:
+        date:
+          type: string
+          format: date
+        kwh:
+          type: number
+        mean_kwh:
+          type: number
+        z_score:
+          type: number
+          description: Écart à la moyenne, en nombre d'écarts-types.
+
+    Breakdown:
+      type: object
+      required: [estimated, source, items]
+      properties:
+        estimated:
+          type: boolean
+          const: true
+        source:
+          type: string
+          enum: [ohm]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BreakdownItem'
+
+    BreakdownItem:
+      type: object
+      required: [usage, label, kwh]
+      properties:
+        usage:
+          type: string
+          description: Clé d'usage telle que renvoyée par Ohm Énergie.
+          enum: [Cooking, Light, ECS, Other, Multimedia, BigApp, EV, Pool, Heat, HVAC, StandBy, Cold]
+        label:
+          type: string
+          description: Libellé français de l'usage.
+        kwh:
+          type: number
+          description: Énergie estimée pour cet usage, en kWh.
+
+    Contract:
+      type: object
+      required: [contract_id, meter_id, status, category, start_date]
+      properties:
+        contract_id:
+          type: string
+          pattern: "^[0-9a-f]{12}$"
+        meter_id:
+          type: string
+          pattern: "^[0-9a-f]{12}$"
+          description: Identifiant opaque du compteur rattaché au contrat.
+        status:
+          type: string
+          description: Statut du contrat, tel que renvoyé par Ohm Énergie.
+        category:
+          type: string
+          description: Catégorie de contrat.
+        start_date:
+          type: string
+          format: date
+
+    ContractList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contract'
+
+    Invoice:
+      type: object
+      required: [invoice_id, invoice_number, type, period, invoice_date, due_date, amount_eur, amount_paid_eur, amount_due_eur, can_download]
+      properties:
+        invoice_id:
+          type: string
+          description: Identifiant de la facture fourni par Ohm Énergie.
+        invoice_number:
+          type: integer
+        type:
+          type: string
+          description: Type de facture.
+        period:
+          type: string
+          description: Période de facturation, en texte.
+        invoice_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        amount_eur:
+          type: number
+          description: Montant TTC, en euros.
+        amount_paid_eur:
+          type: number
+          description: Montant payé, en euros.
+        amount_due_eur:
+          type: number
+          description: Montant restant dû, en euros.
+        can_download:
+          type: boolean
+          description: "`true` si le PDF peut être téléchargé auprès d'Ohm Énergie. Le service ne sert pas le PDF."
+
+    InvoiceList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Balance:
+      type: object
+      required: [contract_id, balance_eur, total_balance_eur, currency]
+      properties:
+        contract_id:
+          type: string
+          pattern: "^[0-9a-f]{12}$"
+        balance_eur:
+          type: ["number", "null"]
+          description: Solde du contrat, en euros. Positif si le client doit de l'argent. `null` si Ohm Énergie ne renvoie pas de valeur.
+        total_balance_eur:
+          type: ["number", "null"]
+          description: Solde total du compte, en euros. `null` si non disponible.
+        currency:
+          type: string
+          enum: [EUR]
+
+    Tariff:
+      type: object
+      description: Métadonnées d'une grille tarifaire. Aucun prix n'est inclus.
+      required: [offer_name, start_date, end_date, document_file_name]
+      properties:
+        offer_name:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: ["string", "null"]
+          format: date
+        document_file_name:
+          type: string
+          description: Nom du fichier du document de la grille tarifaire.
+
+    TariffList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tariff'
+
+    LegacyError:
+      type: object
+      description: Erreur des routes legacy (format historique, non RFC 9457).
+      required: [error]
+      properties:
+        error:
+          type: string

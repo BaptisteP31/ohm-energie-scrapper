@@ -1,0 +1,29 @@
+meta {
+  name: listMeters - Lister les compteurs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+vars:post-response {
+  meterId: res.body.items[0].id
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Retourne les compteurs de tous les contrats du compte. Le PDL est fourni dans le corps de la réponse, jamais dans l'URL.
+}

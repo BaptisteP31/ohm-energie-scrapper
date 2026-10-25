@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ohm-energie-scrapper"
-version = "0.1.0"
+version = "0.3.0"
 description = "Accès en lecture seule aux données de l'espace client Ohm Énergie (API non officielle, usage personnel)."
 readme = "README.md"
 requires-python = ">=3.10"

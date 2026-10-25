@@ -1,0 +1,30 @@
+meta {
+  name: getMeter - Lire un compteur
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.pdl: isDefined
+  res.body.subscribed_power_kva: isDefined
+  res.body.is_linky: isDefined
+  res.body.contract_id: isDefined
+  res.body.data_access_enabled: isDefined
+  res.body.start_date: isDefined
+}
+
+docs {
+  Retourne les caractéristiques d'un compteur identifié par son `meterId` opaque.
+}

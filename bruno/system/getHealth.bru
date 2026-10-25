@@ -1,0 +1,20 @@
+meta {
+  name: getHealth - Vérifier que le service répond
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}:{{port}}/health
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: isDefined
+}
+
+docs {
+  Retourne l'état du service. Accessible sans authentification et sans appel à Ohm Énergie.
+}

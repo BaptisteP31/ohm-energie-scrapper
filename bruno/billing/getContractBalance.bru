@@ -1,0 +1,27 @@
+meta {
+  name: getContractBalance - Lire le solde du contrat
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{host}}:{{port}}/v1/contracts/{{contractId}}/balance
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.contract_id: isDefined
+  res.body.balance_eur: isDefined
+  res.body.total_balance_eur: isDefined
+  res.body.currency: isDefined
+}
+
+docs {
+  Retourne le solde du contrat et le solde total. Un solde positif signifie que le client doit de l'argent. Le champ `balance_eur` peut être `null` si Ohm Énergie ne renvoie aucune valeur.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: listContractTariffs - Lister les grilles tarifaires du contrat (métadonnées)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{host}}:{{port}}/v1/contracts/{{contractId}}/tariffs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Retourne les métadonnées des grilles tarifaires du contrat : nom de l'offre, dates de début et de fin, nom du fichier du document.
+  Cette route ne retourne aucun prix. Les prix ne sont pas exposés par l'API.
+}

@@ -1,0 +1,37 @@
+meta {
+  name: getMeterConsumptionAnomalies - Détecter les jours anormaux
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/anomalies
+  body: none
+  auth: bearer
+}
+
+params:query {
+  from: 2026-10-18
+  to: 2026-10-24
+  threshold: 2.0
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.from: isDefined
+  res.body.to: isDefined
+  res.body.threshold: isDefined
+  res.body.mean_kwh: isDefined
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Signale les jours dont la consommation quotidienne s'écarte de la moyenne de la plage de plus de `threshold` écarts-types.
+  La plage doit comporter entre 7 et 31 jours.
+}

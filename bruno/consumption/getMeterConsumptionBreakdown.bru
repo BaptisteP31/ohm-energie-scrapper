@@ -1,0 +1,28 @@
+meta {
+  name: getMeterConsumptionBreakdown - Lire la répartition estimée par usage
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/breakdown
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.estimated: isDefined
+  res.body.source: isDefined
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Retourne la répartition estimée de la consommation par usage (chauffage, eau chaude, cuisson, veille, etc.), telle que calculée par Ohm Énergie.
+  Les valeurs sont des estimations (`estimated: true`). Le service ne les recalcule pas et ne précise pas de plage de dates.
+}

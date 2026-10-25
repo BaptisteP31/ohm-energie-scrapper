@@ -1,0 +1,34 @@
+meta {
+  name: getLegacyConsumption (granularité hourly, format CSV) - Séries de consommation (legacy)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{host}}:{{port}}/consumption
+  body: none
+  auth: bearer
+}
+
+params:query {
+  granularity: hourly
+  from: 2026-10-18
+  to: 2026-10-24
+  format: csv
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body: isString
+}
+
+docs {
+  Route historique, conservée à l'identique. Retourne une série de consommation pour `granularity` = `hourly`, `daily`, `power-days` ou `power-months`.
+  Paramètres : `from`, `to`, `format` (`json` ou `csv`) et `refresh`. Remplacée par les routes /v1.
+
+  Variante : granularité hourly, format CSV.
+}

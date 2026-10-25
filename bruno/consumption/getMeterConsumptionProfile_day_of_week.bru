@@ -1,0 +1,38 @@
+meta {
+  name: getMeterConsumptionProfile (par day-of-week) - Calculer le profil moyen de consommation
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/consumption/profile
+  body: none
+  auth: bearer
+}
+
+params:query {
+  by: day-of-week
+  from: 2026-10-18
+  to: 2026-10-24
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.meta: isDefined
+  res.body.by: isDefined
+  res.body.from: isDefined
+  res.body.to: isDefined
+  res.body.items: isDefined
+  res.body.items: isArray
+}
+
+docs {
+  Calcule la consommation moyenne par heure de la journée (`hour-of-day`) ou par jour de la semaine (`day-of-week`), sur la plage demandée.
+  La plage est limitée à 31 jours.
+
+  Variante : par day-of-week.
+}

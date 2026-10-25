@@ -1,0 +1,44 @@
+meta {
+  name: listMeterReadings (JSON) - Lister les relevés demi-heure
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/v1/meters/{{meterId}}/readings?from=2026-10-18&to=2026-10-24&page=1&limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  from: 2026-10-18
+  to: 2026-10-24
+  page: 1
+  limit: 100
+}
+
+headers {
+  Accept: application/json
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isDefined
+  res.body.items: isArray
+  res.body.pagination: isDefined
+}
+
+docs {
+  Retourne les relevés de 30 minutes entre `from` et `to` inclus, avec un maximum de 31 jours par requête.
+  Les résultats sont paginés (`page`, `limit`, 500 maximum). L'en-tête `Link` donne les pages précédente et suivante.
+  
+  Avec l'en-tête `Accept: text/csv`, la même page est retournée au format CSV (colonnes `timestamp,wh,kwh,tariff_period`).
+  
+  Les relevés arrivent avec un retard de 24 à 48 h. Les dernières heures peuvent donc être absentes.
+  
+  Variante : JSON.
+}
